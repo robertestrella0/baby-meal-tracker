@@ -1,0 +1,722 @@
+import { useState, useEffect, useRef } from "react";
+
+// ── Constantes ────────────────────────────────────────────────────────────────
+const WEEK_SUGGESTIONS = {
+  1: { label:"Semana 1", tip:"1 comida al día · Un alimento a la vez, 2 días seguidos antes de cambiar.", foods:["Yema de huevo","Caldo de carne (meat stock)","Médula ósea (bone marrow)","Hígado (res o pollo)","Sebo (tallow) o manteca de cerdo"] },
+  2: { label:"Semana 2", tip:"Continúa con 1 comida al día.", foods:["Carne cocida lentamente (cordero o res)","Aceite de coco","Yogurt de coco"] },
+  3: { label:"Semana 3", tip:"Puedes empezar 2 comidas al día.", foods:["Ghee y aceite de oliva","Papaya, mango o banana","Aguacate","Salmuera de chucrut"] },
+  4: { label:"Semana 4", tip:"Sigue sumando alimentos.", foods:["Pollo cocido lentamente","Compota fermentada de manzana o pera","Especias suaves"] },
+  5: { label:"Semana 5", tip:"El sistema digestivo está más preparado.", foods:["Zanahoria o batata (sweet potato)","Huevas de pescado / caviar"] },
+  6: { label:"Semana 6", tip:"Nuevas texturas y combinaciones.", foods:["Mantequilla de coco","Cebolla y ajo en sopas","Frutas guisadas: manzana, pera, melocotón","Koftas de carne molida"] },
+  7: { label:"Semana 7", tip:"Ampliar variedad de vegetales.", foods:["Remolacha (beetroot)","Zucchini / calabacín"] },
+  8: { label:"Semana 8+", tip:"Superalimentos y más variedad.", foods:["Vegetales marinos: dulse, kelp, kombu","Gelatina y colágeno","Mantequilla de pasto (grass-fed butter)"] },
+};
+const REACTIONS = [
+  { key:"love", emoji:"😍", label:"Le encantó" },
+  { key:"ok",   emoji:"😊", label:"Lo aceptó" },
+  { key:"meh",  emoji:"😐", label:"Indiferente" },
+  { key:"reject",emoji:"🤢", label:"Lo rechazó" },
+  { key:"allergy",emoji:"⚠️", label:"Posible reacción" },
+];
+const MEALS   = ["Desayuno","Merienda AM","Almuerzo","Merienda PM","Cena"];
+const AMOUNTS = ["Probó poco (1-2 cdtas)","Comió algo (3-5 cdtas)","Comió bien (½ taza)","Comió todo"];
+
+function todayStr()   { return new Date().toISOString().slice(0,10); }
+function weekNum(startISO, refISO) {
+  if (!startISO) return 0;
+  const diff = (new Date(refISO+"T12:00:00") - new Date(startISO+"T12:00:00")) / 86400000;
+  if (diff < 0) return 0;
+  return Math.floor(diff/7)+1;
+}
+function fmtDate(d) {
+  return new Date(d+"T12:00:00").toLocaleDateString("es-DO",{weekday:"long",day:"numeric",month:"long"});
+}
+function genCode() {
+  return Math.random().toString(36).slice(2,8).toUpperCase();
+}
+function dataKey(code) { return "bmt_family_"+code; }
+
+// ── Avatar ────────────────────────────────────────────────────────────────────
+function Avatar({ src, name, size=72 }) {
+  const initials = (name||"?").slice(0,2).toUpperCase();
+  if (src) return (
+    <img src={src} alt={name} width={size} height={size}
+      style={{borderRadius:"50%",objectFit:"cover",objectPosition:"center top",display:"block"}} />
+  );
+  const colors = ["#FF8C42","#4ECDC4","#A78BFA","#F472B6","#34D399","#60A5FA"];
+  const color = colors[(name||"").charCodeAt(0)%colors.length];
+  return (
+    <div style={{width:size,height:size,borderRadius:"50%",background:color,display:"flex",alignItems:"center",
+      justifyContent:"center",fontFamily:"'Nunito',sans-serif",fontWeight:900,
+      fontSize:size*0.35,color:"#fff",flexShrink:0}}>
+      {initials}
+    </div>
+  );
+}
+
+// ── Pantalla de inicio / código ───────────────────────────────────────────────
+function WelcomeScreen({ onEnter }) {
+  const [mode, setMode]     = useState(null); // "create" | "join"
+  const [code, setCode]     = useState("");
+  const [name, setName]     = useState("");
+  const [startDate, setSD]  = useState(todayStr());
+  const [photo, setPhoto]   = useState(null);
+  const [err, setErr]       = useState("");
+  const fileRef             = useRef();
+
+  async function handleCreate() {
+    if (!name.trim()) { setErr("Escribe el nombre del bebé"); return; }
+    const fc = genCode();
+    const profile = { babyName: name.trim(), startDate, photoUrl: photo, code: fc, entries: {} };
+    try { await window.storage.set(dataKey(fc), JSON.stringify(profile), true); }
+    catch(e){}
+    onEnter(profile);
+  }
+
+  async function handleJoin() {
+    const c = code.trim().toUpperCase();
+    if (!c) { setErr("Escribe el código familiar"); return; }
+    try {
+      const res = await window.storage.get(dataKey(c), true);
+      if (res) { onEnter(JSON.parse(res.value)); }
+      else { setErr("Código no encontrado. Verifica e intenta de nuevo."); }
+    } catch(e) { setErr("Código no encontrado."); }
+  }
+
+  function onPhoto(e) {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = ev => setPhoto(ev.target.result);
+    r.readAsDataURL(f);
+  }
+
+  return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#fff8f0 0%,#fdecd6 100%)",
+      display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 16px"}}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Playfair+Display:wght@700&display=swap');
+        *{box-sizing:border-box;margin:0;padding:0;}
+        input,select,textarea{font-family:'Nunito',sans-serif;font-size:15px;border:2px solid #ffe0b2;
+          border-radius:12px;padding:10px 14px;width:100%;outline:none;background:#fffaf4;color:#4a3520;transition:border .2s;}
+        input:focus,select:focus{border-color:#ff8c42;}
+        .btn{font-family:'Nunito',sans-serif;font-weight:800;font-size:15px;cursor:pointer;
+          border:none;border-radius:14px;padding:13px 20px;transition:transform .15s,opacity .15s;}
+        .btn:hover{transform:translateY(-1px);}
+        .btn:disabled{opacity:.5;}`}
+      </style>
+
+      <div style={{fontSize:52,marginBottom:8}}>🥣</div>
+      <div style={{fontFamily:"'Playfair Display',serif",fontSize:28,color:"#ff8c42",fontWeight:700,textAlign:"center",marginBottom:4}}>
+        Baby Meal Tracker
+      </div>
+      <div style={{fontSize:13,color:"#c49a6c",marginBottom:32,textAlign:"center"}}>
+        Diario de alimentación familiar · Baby Meal Map
+      </div>
+
+      {!mode && (
+        <div style={{width:"100%",maxWidth:360,display:"flex",flexDirection:"column",gap:12}}>
+          <button className="btn" onClick={()=>setMode("create")}
+            style={{background:"linear-gradient(135deg,#ff8c42,#ffb347)",color:"#fff",boxShadow:"0 4px 14px rgba(255,140,66,.35)"}}>
+            ✨ Crear familia nueva
+          </button>
+          <button className="btn" onClick={()=>setMode("join")}
+            style={{background:"#fff",color:"#ff8c42",border:"2px solid #ffb347"}}>
+            🔑 Entrar con código familiar
+          </button>
+        </div>
+      )}
+
+      {mode==="create" && (
+        <div style={{width:"100%",maxWidth:360,background:"#fff",borderRadius:24,padding:"24px 20px",
+          boxShadow:"0 4px 24px rgba(255,140,66,.12)"}}>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,color:"#4a3520",fontWeight:700,marginBottom:16}}>
+            👶 Crear perfil del bebé
+          </div>
+          <div style={{fontSize:13,fontWeight:700,color:"#7a5530",marginBottom:6}}>Nombre del bebé *</div>
+          <input value={name} onChange={e=>setName(e.target.value)} placeholder="ej. Rodrigo Andrés" />
+
+          <div style={{fontSize:13,fontWeight:700,color:"#7a5530",margin:"14px 0 6px"}}>Fecha inicio alimentos</div>
+          <input type="date" value={startDate} onChange={e=>setSD(e.target.value)} />
+
+          <div style={{fontSize:13,fontWeight:700,color:"#7a5530",margin:"14px 0 6px"}}>📸 Foto del bebé (opcional)</div>
+          <input type="file" ref={fileRef} accept="image/*" onChange={onPhoto} style={{cursor:"pointer"}} />
+          {photo && <img src={photo} alt="preview" style={{width:"100%",borderRadius:12,marginTop:8,maxHeight:120,objectFit:"cover"}} />}
+
+          {err && <div style={{color:"#e05a2a",fontSize:13,marginTop:8,fontWeight:700}}>{err}</div>}
+
+          <div style={{display:"flex",gap:8,marginTop:18}}>
+            <button className="btn" onClick={()=>{setMode(null);setErr("");}}
+              style={{background:"#f5f0ea",color:"#7a5530",flex:1}}>← Volver</button>
+            <button className="btn" onClick={handleCreate}
+              style={{background:"linear-gradient(135deg,#ff8c42,#ffb347)",color:"#fff",flex:2}}>
+              Crear familia ✓
+            </button>
+          </div>
+        </div>
+      )}
+
+      {mode==="join" && (
+        <div style={{width:"100%",maxWidth:360,background:"#fff",borderRadius:24,padding:"24px 20px",
+          boxShadow:"0 4px 24px rgba(255,140,66,.12)"}}>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,color:"#4a3520",fontWeight:700,marginBottom:16}}>
+            🔑 Entrar con código familiar
+          </div>
+          <div style={{fontSize:13,fontWeight:700,color:"#7a5530",marginBottom:6}}>Código de 6 letras</div>
+          <input value={code} onChange={e=>setCode(e.target.value.toUpperCase())}
+            placeholder="ej. XK9M2R" maxLength={6}
+            style={{textTransform:"uppercase",fontSize:24,letterSpacing:6,textAlign:"center"}} />
+          <div style={{fontSize:12,color:"#c49a6c",marginTop:6}}>Pídele el código a quien creó la familia</div>
+
+          {err && <div style={{color:"#e05a2a",fontSize:13,marginTop:8,fontWeight:700}}>{err}</div>}
+
+          <div style={{display:"flex",gap:8,marginTop:18}}>
+            <button className="btn" onClick={()=>{setMode(null);setErr("");}}
+              style={{background:"#f5f0ea",color:"#7a5530",flex:1}}>← Volver</button>
+            <button className="btn" onClick={handleJoin}
+              style={{background:"linear-gradient(135deg,#ff8c42,#ffb347)",color:"#fff",flex:2}}>
+              Entrar →
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── App principal ─────────────────────────────────────────────────────────────
+export default function App() {
+  const [family, setFamily]     = useState(null);
+  const [view, setView]         = useState("diario");
+  const [selDate, setSelDate]   = useState(todayStr());
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm]         = useState({food:"",meal:"Almuerzo",reaction:"ok",amount:"",notes:"",photoUrl:null});
+  const [saving, setSaving]     = useState(false);
+  const [syncMsg, setSyncMsg]   = useState(null);
+  const [copied, setCopied]     = useState(false);
+  const [loaded, setLoaded]     = useState(false);
+  // Chat Claude
+  const [chatMsgs, setChatMsgs] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatEndRef              = useRef();
+  const fileRef                 = useRef();
+  const pollRef                 = useRef();
+
+  async function sync(fam) {
+    try {
+      const res = await window.storage.get(dataKey(fam.code), true);
+      if (res) {
+        const remote = JSON.parse(res.value);
+        setFamily(prev => ({ ...prev, entries: remote.entries||{} }));
+      }
+    } catch(e){}
+  }
+
+  useEffect(()=>{
+    if (!family) return;
+    setLoaded(true);
+    sync(family);
+    pollRef.current = setInterval(()=>sync(family), 12000);
+    return ()=>clearInterval(pollRef.current);
+  },[family?.code]);
+
+  async function save(newFam) {
+    try {
+      await window.storage.set(dataKey(newFam.code), JSON.stringify(newFam), true);
+      setSyncMsg("✓ Sincronizado");
+      setTimeout(()=>setSyncMsg(null),2000);
+    } catch(e){}
+  }
+
+  function onPhoto(e) {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = ev => setForm(p=>({...p,photoUrl:ev.target.result}));
+    r.readAsDataURL(f);
+  }
+
+  async function handleSave() {
+    if (!form.food.trim()) return;
+    setSaving(true);
+    const entry = {
+      id: Date.now(), food:form.food.trim(), meal:form.meal, reaction:form.reaction,
+      amount:form.amount, notes:form.notes.trim(), photoUrl:form.photoUrl||null,
+      time: new Date().toLocaleTimeString("es-DO",{hour:"2-digit",minute:"2-digit"}),
+    };
+    const newEntries = { ...family.entries, [selDate]: [...(family.entries[selDate]||[]), entry] };
+    const newFam = { ...family, entries: newEntries };
+    setFamily(newFam);
+    await save(newFam);
+    setForm({food:"",meal:"Almuerzo",reaction:"ok",amount:"",notes:"",photoUrl:null});
+    setShowForm(false);
+    setSaving(false);
+  }
+
+  async function deleteEntry(dateStr, id) {
+    const newEntries = { ...family.entries, [dateStr]: (family.entries[dateStr]||[]).filter(e=>e.id!==id) };
+    const newFam = { ...family, entries: newEntries };
+    setFamily(newFam);
+    await save(newFam);
+  }
+
+  function copyCode() {
+    navigator.clipboard?.writeText(family.code).catch(()=>{});
+    setCopied(true); setTimeout(()=>setCopied(false),2000);
+  }
+
+  if (!family) return <WelcomeScreen onEnter={f=>{ setFamily({...f,entries:f.entries||{}}); }} />;
+
+  const dayEntries = family.entries[selDate]||[];
+  const allDates   = Object.keys(family.entries).filter(d=>(family.entries[d]||[]).length>0).sort((a,b)=>b.localeCompare(a));
+  const totalFoods = [...new Set(allDates.flatMap(d=>(family.entries[d]||[]).map(e=>e.food)))].length;
+  // ── Claude chat ──────────────────────────────────────────────────────────
+  function buildContext() {
+    const allFoods = [...new Set(allDates.flatMap(d=>(family.entries[d]||[]).map(e=>e.food)))];
+    const loved    = allDates.flatMap(d=>(family.entries[d]||[]).filter(e=>e.reaction==="love").map(e=>e.food));
+    const rejected = allDates.flatMap(d=>(family.entries[d]||[]).filter(e=>e.reaction==="reject").map(e=>e.food));
+    const alerts   = allDates.flatMap(d=>(family.entries[d]||[]).filter(e=>e.reaction==="allergy").map(e=>e.food));
+    return `Eres un asistente especializado en alimentación complementaria de bebés, basado en el método Baby Meal Map.
+
+CONTEXTO DEL BEBÉ:
+- Nombre: ${family.babyName}
+- Semana de introducción actual: ${wk > 0 ? wk : "aún no ha comenzado"}
+- Fecha inicio alimentos: ${family.startDate || "no definida"}
+- Alimentos probados (${allFoods.length}): ${allFoods.length ? allFoods.join(", ") : "ninguno aún"}
+- Favoritos (😍): ${loved.length ? [...new Set(loved)].join(", ") : "ninguno registrado"}
+- Rechazados (🤢): ${rejected.length ? [...new Set(rejected)].join(", ") : "ninguno"}
+- Posibles alergias (⚠️): ${alerts.length ? [...new Set(alerts)].join(", ") : "ninguna"}
+
+INSTRUCCIONES:
+- Responde siempre en español, tono cálido y parental
+- Sé conciso y práctico (máximo 3-4 párrafos cortos)
+- Usa el contexto del bebé para personalizar cada respuesta
+- Si hay posibles alergias registradas, menciónalas con cuidado
+- Cuando sugieras alimentos, verifica que sean apropiados para la semana actual
+- Añade emojis para hacer las respuestas más amigables`;
+  }
+
+  const QUICK_PROMPTS = [
+    "¿Qué alimentos le puedo dar esta semana?",
+    "¿Cómo preparo la yema de huevo para bebé?",
+    "¿Cada cuánto tiempo introduzco un alimento nuevo?",
+    "¿Qué hago si rechaza un alimento?",
+    `¿Cómo saber si ${family?.babyName||"el bebé"} está listo para más texturas?`,
+    "¿Cuáles son señales de alergia que debo vigilar?",
+  ];
+
+  async function sendChat(text) {
+    const msg = text || chatInput.trim();
+    if (!msg || chatLoading) return;
+    setChatInput("");
+    const userMsg = { role:"user", content: msg };
+    const newMsgs = [...chatMsgs, userMsg];
+    setChatMsgs(newMsgs);
+    setChatLoading(true);
+    setTimeout(()=>chatEndRef.current?.scrollIntoView({behavior:"smooth"}),100);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model:"claude-sonnet-4-20250514",
+          max_tokens:1000,
+          system: buildContext(),
+          messages: newMsgs.map(m=>({role:m.role, content:m.content})),
+        }),
+      });
+      const data = await res.json();
+      const reply = data.content?.map(b=>b.text||"").join("")||"Lo siento, no pude procesar tu consulta.";
+      setChatMsgs(p=>[...p,{role:"assistant",content:reply}]);
+    } catch(e) {
+      setChatMsgs(p=>[...p,{role:"assistant",content:"⚠️ Error al conectar con el asistente. Intenta de nuevo."}]);
+    }
+    setChatLoading(false);
+    setTimeout(()=>chatEndRef.current?.scrollIntoView({behavior:"smooth"}),100);
+  }
+
+  const wk = weekNum(family.startDate, selDate);
+  const rxInfo     = k => REACTIONS.find(r=>r.key===k)||REACTIONS[1];
+
+  const dayEntries = family.entries[selDate]||[];
+  const allDates   = Object.keys(family.entries).filter(d=>(family.entries[d]||[]).length>0).sort((a,b)=>b.localeCompare(a));
+  const totalFoods = [...new Set(allDates.flatMap(d=>(family.entries[d]||[]).map(e=>e.food)))].length;
+  const rxInfo     = k => REACTIONS.find(r=>r.key===k)||REACTIONS[1];
+
+  const css = `
+    @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Playfair+Display:wght@700&display=swap');
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{background:#fdf6ec;}
+    .card{background:#fff;border-radius:20px;box-shadow:0 2px 16px rgba(255,150,50,.08);padding:16px;margin-bottom:12px;}
+    .btn-p{background:linear-gradient(135deg,#ff8c42,#ffb347);color:#fff;border:none;border-radius:14px;
+      padding:12px 18px;font-family:'Nunito',sans-serif;font-weight:800;font-size:14px;cursor:pointer;
+      box-shadow:0 4px 14px rgba(255,140,66,.3);transition:transform .15s;}
+    .btn-p:hover{transform:translateY(-2px);}
+    .btn-p:disabled{opacity:.5;}
+    input,select,textarea{font-family:'Nunito',sans-serif;font-size:15px;border:2px solid #ffe0b2;
+      border-radius:12px;padding:10px 14px;width:100%;outline:none;background:#fffaf4;color:#4a3520;transition:border .2s;}
+    input:focus,select:focus{border-color:#ff8c42;}
+    label{font-weight:700;color:#7a5530;font-size:13px;display:block;margin-bottom:5px;margin-top:12px;}
+    .nav-btn{flex:1;padding:11px 2px;border:none;background:transparent;font-family:'Nunito',sans-serif;
+      font-weight:700;font-size:11px;color:#c49a6c;cursor:pointer;border-bottom:3px solid transparent;transition:all .2s;}
+    .nav-btn.active{color:#ff8c42;border-bottom:3px solid #ff8c42;}
+    .entry-card{background:#fffaf4;border-radius:14px;padding:12px 14px;margin-bottom:10px;border-left:4px solid #ffb347;position:relative;}
+    .del-btn{position:absolute;top:8px;right:10px;background:none;border:none;color:#ffb347;font-size:15px;cursor:pointer;opacity:.5;}
+    .del-btn:hover{opacity:1;color:#e05a2a;}
+    .overlay{position:fixed;inset:0;background:rgba(90,50,20,.3);z-index:100;display:flex;align-items:flex-end;justify-content:center;}
+    .modal{background:#fff;border-radius:28px 28px 0 0;width:100%;max-width:520px;padding:22px 18px 36px;
+      max-height:92vh;overflow-y:auto;animation:slideUp .25s cubic-bezier(.2,.9,.4,1);}
+    @keyframes slideUp{from{transform:translateY(60px);opacity:0}to{transform:translateY(0);opacity:1}}
+    .pill{display:inline-flex;align-items:center;gap:3px;border-radius:20px;padding:3px 9px;font-size:11px;font-weight:700;}
+    .rx-btn{border:2px solid #ffe0b2;border-radius:12px;padding:7px 10px;background:#fffaf4;
+      cursor:pointer;font-size:20px;transition:all .15s;}
+    .rx-btn.sel{border-color:#ff8c42;background:#fff5e6;transform:scale(1.15);}
+    .amt-btn{border:2px solid #ffe0b2;border-radius:10px;padding:6px 8px;background:#fffaf4;
+      cursor:pointer;font-size:12px;font-weight:700;color:#a07040;transition:all .15s;text-align:center;}
+    .amt-btn.sel{border-color:#ff8c42;background:#fff5e6;color:#e07b2a;}
+    .suggest-card{background:#fff;border-radius:12px;padding:10px 12px;margin-bottom:7px;
+      display:flex;align-items:center;justify-content:space-between;border:2px solid #ffe0b2;cursor:pointer;transition:all .15s;}
+    .suggest-card:hover{border-color:#ff8c42;background:#fff9f1;}
+    .empty{text-align:center;padding:36px 16px;color:#c49a6c;}
+    .scrollable{overflow-y:auto;padding-bottom:90px;}
+    .wbadge{background:linear-gradient(135deg,#ff8c42,#ffb347);color:#fff;border-radius:20px;
+      padding:3px 11px;font-size:11px;font-weight:800;display:inline-block;}
+    .code-badge{background:#fff5e6;border:2px solid #ffb347;border-radius:12px;
+      padding:6px 14px;font-size:18px;font-weight:900;letter-spacing:4px;color:#ff8c42;cursor:pointer;
+      font-family:'Nunito',sans-serif;transition:background .15s;}
+    .code-badge:hover{background:#ffe8cc;}
+    .sync{position:fixed;top:10px;right:14px;background:#2e7d32;color:#fff;border-radius:20px;
+      padding:4px 12px;font-size:11px;font-weight:700;z-index:200;}
+    .photo-prev{width:100%;border-radius:12px;max-height:150px;object-fit:cover;margin-top:8px;border:2px solid #ffe0b2;}
+    .stat{background:linear-gradient(135deg,#fff5e6,#fff9f1);border-radius:12px;padding:10px;
+      text-align:center;flex:1;border:1.5px solid #ffe0b2;}
+    /* Chat */
+    .chat-wrap{display:flex;flex-direction:column;height:calc(100vh - 200px);}
+    .chat-msgs{flex:1;overflow-y:auto;padding:8px 0 12px;display:flex;flex-direction:column;gap:10px;}
+    .chat-bubble{max-width:82%;padding:10px 14px;border-radius:18px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;}
+    .chat-bubble.user{background:linear-gradient(135deg,#ff8c42,#ffb347);color:#fff;align-self:flex-end;border-bottom-right-radius:4px;}
+    .chat-bubble.bot{background:#fff;color:#4a3520;align-self:flex-start;border-bottom-left-radius:4px;box-shadow:0 2px 8px rgba(255,150,50,.12);}
+    .chat-input-row{display:flex;gap:8px;padding:10px 0 4px;border-top:2px solid #ffe0b2;background:#fdf6ec;}
+    .chat-input{flex:1;border-radius:20px;padding:10px 14px;font-size:13px;resize:none;min-height:40px;max-height:80px;overflow-y:auto;}
+    .chat-send{background:linear-gradient(135deg,#ff8c42,#ffb347);color:#fff;border:none;border-radius:50%;
+      width:40px;height:40px;flex-shrink:0;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;transition:transform .15s;}
+    .chat-send:hover{transform:scale(1.1);}
+    .chat-send:disabled{opacity:.5;}
+    .quick-btn{background:#fff;border:2px solid #ffe0b2;border-radius:20px;padding:6px 12px;
+      font-size:11px;font-weight:700;color:#7a5530;cursor:pointer;white-space:nowrap;
+      font-family:'Nunito',sans-serif;transition:all .15s;flex-shrink:0;}
+    .quick-btn:hover{border-color:#ff8c42;color:#ff8c42;background:#fff9f1;}
+    .typing{display:flex;gap:5px;align-items:center;padding:10px 14px;}
+    .dot{width:7px;height:7px;border-radius:50%;background:#ffb347;animation:bounce .9s infinite;}
+    .dot:nth-child(2){animation-delay:.2s;}
+    .dot:nth-child(3){animation-delay:.4s;}
+    @keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-8px)}}
+  `;
+
+  return (
+    <div style={{minHeight:"100vh",background:"#fdf6ec",fontFamily:"'Nunito',sans-serif"}}>
+      <style>{css}</style>
+      {syncMsg && <div className="sync">{syncMsg}</div>}
+
+      {/* HEADER */}
+      <div style={{background:"linear-gradient(135deg,#ff8c42,#ffb347)",borderRadius:"0 0 28px 28px",
+        padding:"22px 16px 16px",marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{background:"#fff",borderRadius:"50%",padding:3,boxShadow:"0 3px 12px rgba(0,0,0,.15)",flexShrink:0}}>
+            <Avatar src={family.photoUrl} name={family.babyName} size={64} />
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,color:"#fff",fontWeight:700,
+              whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+              {family.babyName}
+            </div>
+            <div style={{color:"rgba(255,255,255,.8)",fontSize:11,fontWeight:700,marginTop:2}}>
+              Diario familiar · Baby Meal Map
+            </div>
+            {wk>0 && <span style={{background:"rgba(255,255,255,.25)",color:"#fff",borderRadius:20,
+              padding:"2px 10px",fontSize:11,fontWeight:800,marginTop:4,display:"inline-block"}}>
+              Semana {wk} de introducción
+            </span>}
+          </div>
+          {/* Código */}
+          <div style={{textAlign:"center",flexShrink:0}}>
+            <div style={{fontSize:10,color:"rgba(255,255,255,.7)",fontWeight:700,marginBottom:3}}>CÓDIGO</div>
+            <div className="code-badge" onClick={copyCode} title="Toca para copiar">
+              {family.code}
+            </div>
+            <div style={{fontSize:10,color:"rgba(255,255,255,.6)",marginTop:2}}>
+              {copied?"¡Copiado!":"toca para copiar"}
+            </div>
+          </div>
+        </div>
+
+        {/* Stats */}
+        {allDates.length>0 && (
+          <div style={{display:"flex",gap:6,marginTop:12}}>
+            <div className="stat"><div style={{fontSize:18,fontWeight:900,color:"#ff8c42"}}>{totalFoods}</div>
+              <div style={{fontSize:10,color:"#7a5530",fontWeight:700}}>alimentos</div></div>
+            <div className="stat"><div style={{fontSize:18,fontWeight:900,color:"#ff8c42"}}>{allDates.length}</div>
+              <div style={{fontSize:10,color:"#7a5530",fontWeight:700}}>días</div></div>
+            <div className="stat"><div style={{fontSize:18,fontWeight:900,color:"#ff8c42"}}>{wk>0?`S${Math.min(wk,8)}`:"–"}</div>
+              <div style={{fontSize:10,color:"#7a5530",fontWeight:700}}>semana</div></div>
+            <div className="stat" onClick={()=>setFamily(null)} style={{cursor:"pointer",flexShrink:0,flex:"none",padding:"10px 12px"}}>
+              <div style={{fontSize:16}}>🔄</div>
+              <div style={{fontSize:9,color:"#7a5530",fontWeight:700}}>cambiar</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* NAV */}
+      <div style={{display:"flex",borderBottom:"2px solid #ffe0b2",background:"#fff",position:"sticky",top:0,zIndex:10}}>
+        {[["diario","📅 Diario"],["historial","📖 Historial"],["sugerencias","💡 Sugerencias"],["asistente","🤖 Asistente"]].map(([k,l])=>(
+          <button key={k} className={`nav-btn${view===k?" active":""}`} onClick={()=>setView(k)}>{l}</button>
+        ))}
+      </div>
+
+      <div style={{padding:"14px 14px 0",maxWidth:520,margin:"0 auto"}}>
+
+        {/* ══ DIARIO ══ */}
+        {view==="diario" && (
+          <div className="scrollable">
+            <div className="card" style={{display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:18}}>📅</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:11,color:"#c49a6c",fontWeight:700,textTransform:"capitalize"}}>Fecha</div>
+                <div style={{fontWeight:800,color:"#7a5530",fontSize:12,textTransform:"capitalize"}}>{fmtDate(selDate)}</div>
+              </div>
+              <input type="date" value={selDate} onChange={e=>setSelDate(e.target.value)}
+                style={{width:"auto",fontSize:13,padding:"5px 8px"}} />
+            </div>
+
+            {!loaded ? (
+              <div className="empty"><div style={{fontSize:28}}>⏳</div><div style={{marginTop:8,fontWeight:700,fontSize:13}}>Cargando...</div></div>
+            ) : dayEntries.length===0 ? (
+              <div className="empty">
+                <Avatar src={family.photoUrl} name={family.babyName} size={56} />
+                <div style={{fontWeight:700,fontSize:14,marginTop:10}}>Sin registros este día</div>
+                <div style={{fontSize:12,marginTop:4}}>Agrega la primera comida del día</div>
+              </div>
+            ) : dayEntries.map(e=>{
+              const rx=rxInfo(e.reaction);
+              return (
+                <div key={e.id} className="entry-card">
+                  <button className="del-btn" onClick={()=>deleteEntry(selDate,e.id)}>🗑</button>
+                  <div style={{display:"flex",gap:10}}>
+                    <span style={{fontSize:24}}>{rx.emoji}</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:800,color:"#4a3520",fontSize:14}}>{e.food}</div>
+                      <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:4}}>
+                        <span className="pill" style={{background:"#fff0e0",color:"#e07b2a"}}>🕐 {e.time}</span>
+                        <span className="pill" style={{background:"#fff0e0",color:"#e07b2a"}}>🍴 {e.meal}</span>
+                        {e.amount && <span className="pill" style={{background:"#f0fff4",color:"#2e7d32"}}>📊 {e.amount}</span>}
+                      </div>
+                      <div style={{fontSize:11,color:"#c49a6c",fontWeight:700,marginTop:4}}>{rx.label}</div>
+                      {e.notes && <div style={{marginTop:4,fontSize:11,color:"#7a5530",background:"#fffaf4",
+                        borderRadius:8,padding:"4px 8px"}}>"{e.notes}"</div>}
+                      {e.photoUrl && <img src={e.photoUrl} alt="" className="photo-prev" />}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ══ HISTORIAL ══ */}
+        {view==="historial" && (
+          <div className="scrollable">
+            {allDates.length===0
+              ? <div className="empty"><div style={{fontSize:36}}>📖</div><div style={{fontWeight:700,marginTop:8,fontSize:13}}>Aún no hay registros</div></div>
+              : allDates.map(d=>{
+                const de=family.entries[d]||[];
+                const w=weekNum(family.startDate,d);
+                return (
+                  <div key={d} className="card">
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                      <div style={{fontSize:11,color:"#c49a6c",fontWeight:700,textTransform:"capitalize"}}>{fmtDate(d)}</div>
+                      {w>0 && <span className="wbadge">S{w}</span>}
+                    </div>
+                    {de.map(e=>{
+                      const rx=rxInfo(e.reaction);
+                      return (
+                        <div key={e.id} style={{display:"flex",alignItems:"center",gap:8,
+                          padding:"6px 0",borderBottom:"1px solid #ffe0b2"}}>
+                          <span style={{fontSize:18}}>{rx.emoji}</span>
+                          <div style={{flex:1}}>
+                            <span style={{fontWeight:800,color:"#4a3520",fontSize:12}}>{e.food}</span>
+                            <span style={{marginLeft:6,fontSize:10,color:"#c49a6c"}}>{e.meal} · {e.time}</span>
+                          </div>
+                          {e.photoUrl && <span style={{fontSize:12}}>📸</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })
+            }
+          </div>
+        )}
+
+        {/* ══ SUGERENCIAS ══ */}
+        {view==="sugerencias" && (
+          <div className="scrollable">
+            <div className="card" style={{background:"linear-gradient(135deg,#fff5e6,#fff9f1)",border:"2px solid #ffe0b2",marginBottom:14}}>
+              <div style={{fontWeight:800,color:"#e07b2a",fontSize:13,marginBottom:3}}>💡 Baby Meal Map</div>
+              <div style={{fontSize:12,color:"#7a5530"}}>
+                {wk<=0 ? "Aún no ha comenzado la introducción · " : `${family.babyName} está en semana ${wk} · `}
+                Toca un alimento para agregarlo al diario.
+              </div>
+            </div>
+            {Object.entries(WEEK_SUGGESTIONS).map(([wkn,data])=>{
+              const n=Number(wkn);
+              const isCur=n===Math.min(wk,8);
+              const isPast=n<Math.min(wk,8);
+              return (
+                <div key={wkn} className="card"
+                  style={{border:isCur?"2px solid #ff8c42":"2px solid transparent",opacity:isPast?.75:1}}>
+                  <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:7}}>
+                    <span className="wbadge"
+                      style={!isCur?{background:isPast?"#e0e0e0":"#f5e6d0",color:isPast?"#888":"#c49a6c"}:{}}>
+                      {data.label}
+                    </span>
+                    {isCur && <span style={{fontSize:10,color:"#ff8c42",fontWeight:800}}>← Semana actual</span>}
+                    {isPast && <span style={{fontSize:10,color:"#aaa",fontWeight:700}}>✓ Completada</span>}
+                  </div>
+                  {data.tip && <div style={{fontSize:11,color:"#7a5530",background:"#fff9f1",borderRadius:8,
+                    padding:"5px 8px",marginBottom:8}}>💬 {data.tip}</div>}
+                  {data.foods.map((food,i)=>(
+                    <div key={i} className="suggest-card" onClick={()=>{
+                      setForm(p=>({...p,food})); setView("diario"); setShowForm(true);
+                    }}>
+                      <span style={{fontWeight:700,color:"#4a3520",fontSize:12}}>🥄 {food}</span>
+                      <span style={{fontSize:10,color:"#ff8c42",fontWeight:700}}>+ Agregar →</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {view==="asistente" && (
+          <div className="chat-wrap">
+            {chatMsgs.length===0 && (
+              <div style={{background:"linear-gradient(135deg,#fff5e6,#fffaf4)",borderRadius:16,
+                padding:"14px 16px",marginBottom:10,border:"2px solid #ffe0b2"}}>
+                <div style={{fontWeight:800,color:"#e07b2a",fontSize:13,marginBottom:4}}>
+                  🤖 Asistente de alimentación
+                </div>
+                <div style={{fontSize:12,color:"#7a5530",lineHeight:1.5}}>
+                  Pregúntame sobre la alimentación de <strong>{family.babyName}</strong>.
+                  Conozco su historial: alimentos probados, semana actual y reacciones registradas.
+                </div>
+                <div style={{marginTop:10,display:"flex",gap:6,overflowX:"auto",paddingBottom:4}}>
+                  {QUICK_PROMPTS.map((q,i)=>(
+                    <button key={i} className="quick-btn" onClick={()=>sendChat(q)}>{q}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="chat-msgs">
+              {chatMsgs.map((m,i)=>(
+                <div key={i} className={`chat-bubble ${m.role==="user"?"user":"bot"}`}>
+                  {m.role==="assistant" && (
+                    <div style={{fontSize:10,fontWeight:800,color:"#ffb347",marginBottom:4}}>🤖 Asistente</div>
+                  )}
+                  {m.content}
+                </div>
+              ))}
+              {chatLoading && (
+                <div className="chat-bubble bot">
+                  <div style={{fontSize:10,fontWeight:800,color:"#ffb347",marginBottom:4}}>🤖 Asistente</div>
+                  <div className="typing"><div className="dot"/><div className="dot"/><div className="dot"/></div>
+                </div>
+              )}
+              <div ref={chatEndRef}/>
+            </div>
+            {chatMsgs.length>0 && !chatLoading && (
+              <div style={{display:"flex",gap:6,overflowX:"auto",padding:"6px 0",marginBottom:4}}>
+                {QUICK_PROMPTS.slice(0,3).map((q,i)=>(
+                  <button key={i} className="quick-btn" onClick={()=>sendChat(q)}>{q}</button>
+                ))}
+              </div>
+            )}
+            <div className="chat-input-row">
+              <textarea className="chat-input" value={chatInput}
+                onChange={e=>setChatInput(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendChat();}}}
+                placeholder="Escribe tu pregunta..." rows={1}
+              />
+              <button className="chat-send" onClick={()=>sendChat()} disabled={!chatInput.trim()||chatLoading}>➤</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* FAB */}
+      {view==="diario" && (
+        <button className="btn-p" onClick={()=>setShowForm(true)}
+          style={{position:"fixed",bottom:22,right:16,borderRadius:"50px",padding:"13px 18px",fontSize:14,zIndex:50,
+            display:"flex",alignItems:"center",gap:7}}>
+          ➕ Nueva comida
+        </button>
+      )}
+
+      {/* MODAL */}
+      {showForm && (
+        <div className="overlay" onClick={e=>e.target===e.currentTarget&&setShowForm(false)}>
+          <div className="modal">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <div style={{display:"flex",alignItems:"center",gap:9}}>
+                <Avatar src={family.photoUrl} name={family.babyName} size={34} />
+                <div style={{fontFamily:"'Playfair Display',serif",fontSize:17,color:"#4a3520",fontWeight:700}}>
+                  Nueva comida
+                </div>
+              </div>
+              <button onClick={()=>setShowForm(false)}
+                style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#c49a6c"}}>✕</button>
+            </div>
+
+            <label>Alimento *</label>
+            <input value={form.food} onChange={e=>setForm(p=>({...p,food:e.target.value}))}
+              placeholder="ej. Yema de huevo, caldo de carne..." />
+
+            <label>Momento del día</label>
+            <select value={form.meal} onChange={e=>setForm(p=>({...p,meal:e.target.value}))}>
+              {MEALS.map(m=><option key={m}>{m}</option>)}
+            </select>
+
+            <label>¿Cuánto comió?</label>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+              {AMOUNTS.map(a=>(
+                <button key={a} className={`amt-btn${form.amount===a?" sel":""}`}
+                  onClick={()=>setForm(p=>({...p,amount:p.amount===a?"":a}))}>{a}</button>
+              ))}
+            </div>
+
+            <label>Reacción</label>
+            <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+              {REACTIONS.map(r=>(
+                <button key={r.key} className={`rx-btn${form.reaction===r.key?" sel":""}`}
+                  onClick={()=>setForm(p=>({...p,reaction:r.key}))} title={r.label}>{r.emoji}</button>
+              ))}
+            </div>
+            <div style={{fontSize:11,color:"#c49a6c",marginTop:3}}>{rxInfo(form.reaction).label}</div>
+
+            <label>Notas</label>
+            <textarea value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))}
+              placeholder="ej. Le encantó, hizo cara chistosa..." rows={2} style={{resize:"none"}} />
+
+            <label>📸 Foto del momento</label>
+            <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onPhoto} />
+            {form.photoUrl && <img src={form.photoUrl} alt="" className="photo-prev" />}
+
+            <button className="btn-p" onClick={handleSave} disabled={!form.food.trim()||saving}
+              style={{width:"100%",marginTop:16}}>
+              {saving?"Guardando...":"✅ Guardar comida"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
